@@ -3,10 +3,10 @@ package utils
 import (
 	"time"
 
-	"github.com/golang-jwt/jwt/v5"
-)
+	"github.com/golang-jwt/jwt/v4"
 
-var jwtSecret = []byte("ebba34271e82839008c40f03c287ffcc")
+	"web-service/config"
+)
 
 func GenerateAccessToken(userID string) (string, error) {
 	claims := jwt.MapClaims{
@@ -15,15 +15,16 @@ func GenerateAccessToken(userID string) (string, error) {
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	return token.SignedString(jwtSecret)
+	return token.SignedString(config.JWTSecret) // ⬅️ BUKAN jwtSecret
 }
 
 func GenerateRefreshToken(userID string) (string, error) {
 	claims := jwt.MapClaims{
 		"user_id": userID,
-		"exp":     time.Now().Add(7 * 24 * time.Hour).Unix(),
+		"type":    "refresh",
+		"exp":     time.Now().Add(30 * 24 * time.Hour).Unix(),
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	return token.SignedString(jwtSecret)
+	return token.SignedString(config.RefreshSecret)
 }

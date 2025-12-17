@@ -2,16 +2,19 @@ package handlers
 
 import (
 	"time"
-	_"fmt"
+	"fmt"
 
 	"database/sql"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/golang-jwt/jwt/v4"
-	"github.com/lib/pq"
+	_"github.com/lib/pq"
+	"github.com/mssola/useragent"
 
 	"web-service/config"
 	"web-service/utils"
+
+	appErr "web-service/errors"
 )
 
 func Register(c *fiber.Ctx) error {
@@ -22,22 +25,24 @@ func Register(c *fiber.Ctx) error {
 	}
 
 	if err := c.BodyParser(&body); err != nil {
-		return c.Status(400).JSON(fiber.Map{
-			"error": "Invalid request",
-		})
+		return appErr.InvalidJSON(err)
 	}
 
 	hash, err := utils.HashPassword(body.Password)
 	if err != nil {
-		return c.Status(500).JSON(fiber.Map{
-			"error": "Password hashing failed",
-		})
+		return appErr.Internal(err)
 	}
 
-	if body.Username == "" || body.Email == "" || body.Password == "" {
-		return c.Status(400).JSON(fiber.Map{
-			"error": "Username, Email fields, Password are required",
-		})
+	if body.Username == "" {
+		return appErr.BadRequest("Username required")
+	}
+
+	if body.Email == "" {
+		return appErr.BadRequest("Email required")
+	}
+
+	if body.Password == "" {
+		return appErr.BadRequest("Password required")
 	}
 
 	_, err = config.DB.Exec(
@@ -45,22 +50,14 @@ func Register(c *fiber.Ctx) error {
 		body.Username, body.Email, hash,
 	)
 
-	if pqErr, ok := err.(*pq.Error); ok {
-		if pqErr.Code == "23505" {
-			switch pqErr.Constraint {
-			case "users_uname_key":
-				return c.Status(409).JSON(fiber.Map{
-					"error": "Username already exists",
-				})
-			case "users_email_key":
-				return c.Status(409).JSON(fiber.Map{
-					"error": "Email already exists",
-				})
-			}
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return appErr.Unauthorized("Invalid credentials")
 		}
+		return appErr.FromDB(err)
 	}
 
-	return c.Status(201).JSON(fiber.Map{
+	return c.JSON(fiber.Map{
 		"message": "Register success",
 		"data": fiber.Map{
 			"username": body.Username,
@@ -77,92 +74,112 @@ func Login(c *fiber.Ctx) error {
 	}
 
 	if err := c.BodyParser(&body); err != nil {
-		return c.Status(400).JSON(fiber.Map{
-			"error": "Invalid request",
-		})
+		return appErr.InvalidJSON(err)
 	}
 
-	if body.Username == "" && body.Email == "" || body.Password == "" {
-		return c.Status(400).JSON(fiber.Map{
-			"error": "Username or Email fields and Password are required",
-		})
+	if body.Username == "" && body.Email == "" {
+		return appErr.BadRequest("Username or Email is required")
+	}
+
+	if body.Password == "" {
+		return appErr.BadRequest("Password is required")
 	}
 
 	var (
-		id    string
-		hash  string
-		uname string
-		roleid sql.NullString
-		err error
+		id     string
+		hash   string
+		uname  string
+		roleID sql.NullString
+		Last_login sql.NullString
+		Last_os sql.NullString
+		Last_browser sql.NullString
+		Last_ip sql.NullString
+		Role_name sql.NullString
+		Role_description sql.NullString
 	)
+
+	var err error
 	if body.Email != "" {
 		err = config.DB.QueryRow(
-			"SELECT userid,password,uname,roleid FROM users WHERE email=$1",
+			`SELECT userid, password, uname, roleid, last_login, last_os, last_browser, last_ip, role_name, role_description
+			 FROM tv_user
+			 WHERE email = $1`,
 			body.Email,
-		).Scan(&id, &hash, &uname, &roleid)
+		).Scan(&id, &hash, &uname, &roleID, &Last_login, &Last_os, &Last_browser, &Last_ip, &Role_name, &Role_description)
 	} else {
 		err = config.DB.QueryRow(
-			"SELECT userid,password,uname,roleid FROM users WHERE uname=$1",
+			`SELECT userid, password, uname, roleid, last_login, last_os, last_browser, last_ip, role_name, role_description
+			 FROM tv_user
+			 WHERE uname = $1`,
 			body.Username,
-		).Scan(&id, &hash, &uname, &roleid)
+		).Scan(&id, &hash, &uname, &roleID, &Last_login, &Last_os, &Last_browser, &Last_ip, &Role_name, &Role_description)
 	}
 
 	if err != nil {
 		if err == sql.ErrNoRows {
-			return c.Status(401).JSON(fiber.Map{
-				"error": "Invalid credentials, user not found!",
-			})
+			return appErr.Unauthorized("Invalid credentials")
 		}
-
-		// error DB lain
-		return c.Status(500).JSON(fiber.Map{
-			"error": "Database error",
-			"details": err.Error(),
-		})
+		return appErr.FromDB(err)
 	}
 
-	if !roleid.Valid {
-		return c.Status(403).JSON(fiber.Map{
-			"error": "User has no role assigned, contact your Administrator to assign!",
-		})
+	if !roleID.Valid {
+		return appErr.Forbidden(
+			"User has no role assigned, contact your administrator",
+		)
 	}
 
 	if err := utils.CheckPassword(hash, body.Password); err != nil {
-		return c.Status(401).JSON(fiber.Map{
-			"error": "Invalid credentials",
-		})
+		return appErr.Unauthorized("Invalid credentials")
 	}
 
 	access, err := utils.GenerateAccessToken(id)
 	if err != nil {
-		return c.Status(500).JSON(fiber.Map{
-			"error": "Access token generation failed",
-		})
+		return appErr.Internal(err)
 	}
 
 	refresh, err := utils.GenerateRefreshToken(id)
 	if err != nil {
-		return c.Status(500).JSON(fiber.Map{
-			"error": "Refresh token generation failed",
-		})
+		return appErr.Internal(err)
 	}
 
+	ip := c.IP()
+	uaString := c.Get("User-Agent")
+	ua := useragent.New(uaString)
+
+	os := ua.OS()
+	browser, _ := ua.Browser()
+
 	_, err = config.DB.Exec(
-		"UPDATE users SET refresh_token=$1, last_login=$2 WHERE userid=$3",
-		refresh,time.Now().UTC(), id,
+		`UPDATE users
+		 SET refresh_token = $1,
+		     last_login = $2,
+		     last_os=$3,
+		     last_browser=$4,
+		     last_ip=$5
+		 WHERE userid = $6`,
+		refresh,
+		time.Now().UTC(),
+		os,
+		browser,
+		ip,
+		id,
 	)
 
 	if err != nil {
-		return c.Status(500).JSON(fiber.Map{
-			"error": "Token save failed",
-		})
+		return appErr.FromDB(err)
 	}
 
-	return c.Status(200).JSON(fiber.Map{
+	return c.JSON(fiber.Map{
 		"access_token":  access,
 		"refresh_token": refresh,
 		"data": fiber.Map{
 			"username": uname,
+			"last_login": Last_login,
+			"last_os": Last_os,
+			"last_browser": Last_browser,
+			"last_ip": Last_ip,
+			"role_name": Role_name,
+			"role_description": Role_description,
 		},
 	})
 }
@@ -172,45 +189,74 @@ func Refresh(c *fiber.Ctx) error {
 		RefreshToken string `json:"refresh_token"`
 	}
 
-	if err := c.BodyParser(&body); err != nil || body.RefreshToken == "" {
-		return c.Status(400).JSON(fiber.Map{
-			"error": "Refresh token required",
-		})
+	if err := c.BodyParser(&body); err != nil {
+		return appErr.InvalidJSON(err)
 	}
 
-	// Parse & validate refresh token
+	if body.RefreshToken == "" {
+		return appErr.BadRequest("Refresh token is required")
+	}
+
 	token, err := jwt.Parse(body.RefreshToken, func(t *jwt.Token) (interface{}, error) {
+
+		// pastikan algoritma benar
+		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, fmt.Errorf("unexpected signing method")
+		}
+
 		return config.RefreshSecret, nil
 	})
+
 	if err != nil || !token.Valid {
-		return c.Status(401).JSON(fiber.Map{
-			"error": "Invalid refresh token",
-		})
+		return appErr.Unauthorized("Invalid refresh token")
 	}
 
-	claims := token.Claims.(jwt.MapClaims)
-	userID := claims["user_id"].(string)
+	claims, ok := token.Claims.(jwt.MapClaims)
+	if !ok {
+		return appErr.Unauthorized("Invalid token claims")
+	}
 
-	// Cek refresh token di DB
+	userID, ok := claims["user_id"].(string)
+	if !ok || userID == "" {
+		return appErr.Unauthorized("Invalid user id in token")
+	}
+
 	var savedToken string
 	err = config.DB.QueryRow(
 		"SELECT refresh_token FROM users WHERE userid=$1",
 		userID,
 	).Scan(&savedToken)
 
-	if err != nil || savedToken != body.RefreshToken {
-		return c.Status(401).JSON(fiber.Map{
-			"error": "Refresh token revoked",
-		})
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return appErr.Unauthorized("User not found")
+		}
+		return appErr.FromDB(err)
+	}
+
+	if savedToken != body.RefreshToken {
+		return appErr.Unauthorized("Refresh token revoked")
 	}
 
 	access, err := utils.GenerateAccessToken(userID)
-	newRefresh, _ := utils.GenerateRefreshToken(userID)
+	if err != nil {
+		return appErr.Internal(err)
+	}
 
-	config.DB.Exec(
+	newRefresh, err := utils.GenerateRefreshToken(userID)
+	if err != nil {
+		return appErr.Internal(err)
+	}
+
+	_, err = config.DB.Exec(
 		"UPDATE users SET refresh_token=$1 WHERE userid=$2",
-		newRefresh, userID,
+		newRefresh,
+		userID,
 	)
+
+	if err != nil {
+		return appErr.FromDB(err)
+	}
 
 	return c.JSON(fiber.Map{
 		"access_token":  access,
@@ -220,39 +266,30 @@ func Refresh(c *fiber.Ctx) error {
 
 func Logout(c *fiber.Ctx) error {
 	token, ok := c.Locals("user").(*jwt.Token)
-	if !ok {
-		return c.Status(401).JSON(fiber.Map{
-			"error": "Invalid token",
-		})
+	if !ok || token == nil {
+		return appErr.Unauthorized("Invalid or missing token")
 	}
 
 	claims, ok := token.Claims.(jwt.MapClaims)
 	if !ok {
-		return c.Status(401).JSON(fiber.Map{
-			"error": "Invalid token claims",
-		})
+		return appErr.Unauthorized("Invalid token claims")
 	}
 
 	userID, ok := claims["user_id"].(string)
-	if !ok {
-		return c.Status(401).JSON(fiber.Map{
-			"error": "Invalid user id",
-		})
+	if !ok || userID == "" {
+		return appErr.Unauthorized("Invalid user id")
 	}
 
 	_, err := config.DB.Exec(
 		"UPDATE users SET refresh_token=NULL WHERE userid=$1",
 		userID,
 	)
+
 	if err != nil {
-		return c.Status(500).JSON(fiber.Map{
-			"error": "Logout failed",
-		})
+		return appErr.FromDB(err)
 	}
 
 	return c.JSON(fiber.Map{
 		"message": "Logout success",
 	})
 }
-
-

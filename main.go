@@ -5,12 +5,15 @@ import (
 
 	"web-service/config"
 	"web-service/routes"
+	"web-service/middleware"
 )
 
 func main() {
 	config.ConnectDB()
 
-	app := fiber.New()
+	app := fiber.New(fiber.Config{
+		ErrorHandler: middleware.ErrorHandler,
+	})
 	routes.Setup(app)
 
 	app.Listen(":3000")

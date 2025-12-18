@@ -132,7 +132,7 @@ func Login(c *fiber.Ctx) error {
 		return appErr.Unauthorized("Invalid credentials")
 	}
 
-	access, err := utils.GenerateAccessToken(id)
+	access, err := utils.GenerateAccessToken(id, roleID.String)
 	if err != nil {
 		return appErr.Internal(err)
 	}
@@ -198,12 +198,9 @@ func Refresh(c *fiber.Ctx) error {
 	}
 
 	token, err := jwt.Parse(body.RefreshToken, func(t *jwt.Token) (interface{}, error) {
-
-		// pastikan algoritma benar
 		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
 			return nil, fmt.Errorf("unexpected signing method")
 		}
-
 		return config.RefreshSecret, nil
 	})
 
@@ -211,16 +208,14 @@ func Refresh(c *fiber.Ctx) error {
 		return appErr.Unauthorized("Invalid refresh token")
 	}
 
-	claims, ok := token.Claims.(jwt.MapClaims)
-	if !ok {
-		return appErr.Unauthorized("Invalid token claims")
-	}
+	claims := token.Claims.(jwt.MapClaims)
 
 	userID, ok := claims["user_id"].(string)
 	if !ok || userID == "" {
 		return appErr.Unauthorized("Invalid user id in token")
 	}
 
+	// cek refresh token di DB
 	var savedToken string
 	err = config.DB.QueryRow(
 		"SELECT refresh_token FROM users WHERE userid=$1",
@@ -238,7 +233,23 @@ func Refresh(c *fiber.Ctx) error {
 		return appErr.Unauthorized("Refresh token revoked")
 	}
 
-	access, err := utils.GenerateAccessToken(userID)
+	// 🔑 ambil role dari DB
+	var roleID sql.NullString
+	err = config.DB.QueryRow(
+		"SELECT roleid FROM users WHERE userid=$1",
+		userID,
+	).Scan(&roleID)
+
+	if err != nil {
+		return appErr.FromDB(err)
+	}
+
+	if !roleID.Valid {
+		return appErr.Forbidden("User has no role assigned")
+	}
+
+	// generate token baru
+	access, err := utils.GenerateAccessToken(userID, roleID.String)
 	if err != nil {
 		return appErr.Internal(err)
 	}
@@ -250,8 +261,7 @@ func Refresh(c *fiber.Ctx) error {
 
 	_, err = config.DB.Exec(
 		"UPDATE users SET refresh_token=$1 WHERE userid=$2",
-		newRefresh,
-		userID,
+		newRefresh, userID,
 	)
 
 	if err != nil {
@@ -291,5 +301,56 @@ func Logout(c *fiber.Ctx) error {
 
 	return c.JSON(fiber.Map{
 		"message": "Logout success",
+	})
+}
+
+func ForgotPassword(c *fiber.Ctx) error {
+	var body struct {
+		Email string `json:"email"`
+	}
+
+	if err := c.BodyParser(&body); err != nil || body.Email == "" {
+		return fiber.ErrBadRequest
+	}
+
+	var userID string
+	err := config.DB.QueryRow(
+		"SELECT userid FROM users WHERE email=$1",
+		body.Email,
+	).Scan(&userID)
+
+	// ❗ Jangan bocorkan apakah email ada atau tidak
+	if err != nil {
+		return c.JSON(fiber.Map{
+			"message": "If email exists, reset link sent",
+		})
+	}
+
+	// Generate token random
+	rawToken := utils.RandomToken(32)
+	tokenHash := utils.HashToken(rawToken)
+
+	expires := time.Now().Add(15 * time.Minute)
+
+	_, err = config.DB.Exec(`
+		INSERT INTO password_resets (user_id, token_hash, expires_at)
+		VALUES ($1, $2, $3)
+	`, userID, tokenHash, expires)
+
+	if err != nil {
+		return fiber.ErrInternalServerError
+	}
+
+	// TODO: send email
+	resetLink := fmt.Sprintf(
+		"%s/reset-password?token=%s",
+		config.FrontendURL,
+		rawToken,
+	)
+
+	go utils.SendResetEmail(body.Email, resetLink)
+
+	return c.JSON(fiber.Map{
+		"message": "If email exists, reset link sent",
 	})
 }

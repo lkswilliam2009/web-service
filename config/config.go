@@ -1,6 +1,12 @@
 package config
+import "os"
 
+var FrontendURL string
 var (
-	JWTSecret = []byte("ebba34271e82839008c40f03c287ffcc")
-	RefreshSecret = []byte("4Wf0ImdAwFjYmYdfMyAy30hvbJpa6bddlWXwD8Rgeyv")
+	JWTSecret = []byte(os.Getenv("JWT_SECRET"))
+	RefreshSecret = []byte(os.Getenv("JWT_REFRESH_SECRET"))
 )
+
+func LoadEnv() {
+	FrontendURL = os.Getenv("FRONTEND_URL")
+}

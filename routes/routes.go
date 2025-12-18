@@ -12,6 +12,7 @@ func Setup(app *fiber.App) {
 	app.Post("/login", handlers.Login)
 	app.Post("/refresh", handlers.Refresh)
 
-	protected := app.Group("/api", middleware.JWTProtected())
-	protected.Post("/logout", handlers.Logout)
+	api := app.Group("/api", middleware.JWTProtected())
+		api.Get("/who-is", handlers.Me)
+		api.Post("/logout", handlers.Logout)
 }

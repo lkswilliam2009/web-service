@@ -90,14 +90,8 @@ Pastikan Go sudah terinstal di mesin kamu (versi minimal disesuaikan dengan proj
 
 ## 💻 Kontribusi
 
-Fork repository
-
-Buat branch fitur baru
-
-Lakukan perubahan
-
-Submit Pull Request
+Reserved
 
 ## 📄 License
 
-Lisensi tergantung apa yang ditetapkan di project ini (jika belum ada, bisa pakai MIT atau lainnya).
+Reserved

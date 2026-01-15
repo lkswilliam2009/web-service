@@ -1,6 +1,6 @@
 # API Web Service
 
-API Web Service sederhana dibangun dengan **Go (Golang)** untuk menyediakan RESTful endpoints yang digunakan untuk berinteraksi dengan data melalui HTTP.
+API Web Service Backend dengan **Go (Golang)** untuk menyediakan RESTful API yang digunakan untuk berinteraksi dengan FE System Administration Enterprise.
 
 Struktur folder utama mencakup:
 - `config/` – konfigurasi aplikasi

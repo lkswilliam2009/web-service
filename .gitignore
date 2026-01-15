@@ -1,0 +1,20 @@
+# tmp
+tmp
+*.log
+main.exe
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+ cklst.txt
+ .env
+ go.mod
+ go.sum
+ web-service.exe

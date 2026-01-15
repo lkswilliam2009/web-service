@@ -5,38 +5,63 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/golang-jwt/jwt/v4"
+	"encoding/json"
 
 	"web-service/config"
+	"web-service/models"
 )
 
 func Me(c *fiber.Ctx) error {
+	// ===== JWT =====
 	token, ok := c.Locals("user").(*jwt.Token)
 	if !ok {
 		return fiber.ErrUnauthorized
 	}
 
-	claims := token.Claims.(jwt.MapClaims)
+	claims, ok := token.Claims.(jwt.MapClaims)
+	if !ok {
+		return fiber.ErrUnauthorized
+	}
 
 	userID, ok := claims["user_id"].(string)
 	if !ok || userID == "" {
 		return fiber.ErrUnauthorized
 	}
 
-	// ===== FETCH USER FROM DB =====
+	role, _ := claims["role"].(string)
+	branch, _ := claims["branch"].(string)
+
+	// parse groups dari JWT
+	var groups []models.Group
+	if raw, ok := claims["groups"]; ok {
+		bytes, _ := json.Marshal(raw)
+		_ = json.Unmarshal(bytes, &groups)
+	}
+
+	// ===== FETCH USER BASIC INFO =====
 	var (
 		username string
 		email string
-		last_login string
-		last_os string
-		last_ip string
 		role_name string
+		branch_name string
+		lastLogin string
+		lastOS string
+		lastIP string
 	)
 
 	err := config.DB.QueryRow(`
-		SELECT uname, email, last_login, last_os, last_ip, role_name
+		SELECT uname, email, role_name, branch_name, last_login, last_os, last_ip
 		FROM tv_user
 		WHERE userid = $1
-	`, userID).Scan(&username, &email, &last_login, &last_os, &last_ip, &role_name)
+	`, userID).Scan(
+		&username,
+		&email,
+		&role_name,
+		&branch_name,
+		&lastLogin,
+		&lastOS,
+		&lastIP,
+	)
 
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -52,14 +77,19 @@ func Me(c *fiber.Ctx) error {
 		"platform":   c.Get("Sec-CH-UA-Platform"),
 	}
 
+	// ===== RESPONSE =====
 	return c.JSON(fiber.Map{
 		"id": userID,
 		"username": username,
-		"email": email,
-		"last_login": last_login,
-		"last_os": last_os,
-		"last_ip": last_ip,
-		"role": role_name,
+		"email":email,
+		"last_login": lastLogin,
+		"last_os": lastOS,
+		"last_ip": lastIP,
+		"role": role,
+		"role_name": role_name,
+		"branch": branch,
+		"branch_name": branch_name,
+		"groups": groups,
 		"device": device,
 	})
 }

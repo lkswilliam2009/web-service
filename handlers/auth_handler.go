@@ -13,6 +13,7 @@ import (
 
 	"web-service/config"
 	"web-service/utils"
+	"web-service/models"
 
 	appErr "web-service/errors"
 )
@@ -94,25 +95,24 @@ func Login(c *fiber.Ctx) error {
 		Last_os sql.NullString
 		Last_browser sql.NullString
 		Last_ip sql.NullString
-		Role_name sql.NullString
-		Role_description sql.NullString
+		Branchid sql.NullString
 	)
 
 	var err error
 	if body.Email != "" {
 		err = config.DB.QueryRow(
-			`SELECT userid, password, uname, roleid, last_login, last_os, last_browser, last_ip, role_name, role_description
-			 FROM tv_user
+			`SELECT userid, password, uname, roleid, last_login, last_os, last_browser, last_ip, branchid
+			 FROM users
 			 WHERE email = $1`,
 			body.Email,
-		).Scan(&id, &hash, &uname, &roleID, &Last_login, &Last_os, &Last_browser, &Last_ip, &Role_name, &Role_description)
+		).Scan(&id, &hash, &uname, &roleID, &Last_login, &Last_os, &Last_browser, &Last_ip, &Branchid)
 	} else {
 		err = config.DB.QueryRow(
-			`SELECT userid, password, uname, roleid, last_login, last_os, last_browser, last_ip, role_name, role_description
-			 FROM tv_user
+			`SELECT userid, password, uname, roleid, last_login, last_os, last_browser, last_ip, branchid
+			 FROM users
 			 WHERE uname = $1`,
 			body.Username,
-		).Scan(&id, &hash, &uname, &roleID, &Last_login, &Last_os, &Last_browser, &Last_ip, &Role_name, &Role_description)
+		).Scan(&id, &hash, &uname, &roleID, &Last_login, &Last_os, &Last_browser, &Last_ip, &Branchid)
 	}
 
 	if err != nil {
@@ -129,10 +129,38 @@ func Login(c *fiber.Ctx) error {
 	}
 
 	if err := utils.CheckPassword(hash, body.Password); err != nil {
-		return appErr.Unauthorized("Invalid credentials")
+		return appErr.Forbidden("Invalid credentials")
 	}
 
-	access, err := utils.GenerateAccessToken(id, roleID.String)
+	// ===== FETCH USER GROUPS =====
+	var groups []models.Group
+	rows, err := config.DB.Query(`
+		SELECT g.groupid, g.group_name
+		FROM users_group ug
+		JOIN ref_group g ON g.groupid = ug.groupid
+		WHERE ug.userid = $1
+	`, id)
+
+	if err != nil {
+		return appErr.FromDB(err)
+	}
+
+	defer rows.Close()
+
+	for rows.Next() {
+		var g models.Group
+		if err := rows.Scan(&g.ID, &g.Name); err != nil {
+			return appErr.FromDB(err)
+		}
+		groups = append(groups, g)
+	}
+
+	branch := ""
+	if Branchid.Valid {
+		branch = Branchid.String
+	}
+
+	access, err := utils.GenerateAccessToken(id, roleID.String, branch, groups)
 	if err != nil {
 		return appErr.Internal(err)
 	}
@@ -178,8 +206,9 @@ func Login(c *fiber.Ctx) error {
 			"last_os": Last_os,
 			"last_browser": Last_browser,
 			"last_ip": Last_ip,
-			"role_name": Role_name,
-			"role_description": Role_description,
+			"role": roleID,
+			"branch": Branchid,
+			"groups": groups,
 		},
 	})
 }
@@ -248,8 +277,42 @@ func Refresh(c *fiber.Ctx) error {
 		return appErr.Forbidden("User has no role assigned")
 	}
 
+	// ===== FETCH USER GROUPS =====
+	var groups []models.Group
+	rows, err := config.DB.Query(`
+		SELECT g.groupid, g.group_name
+		FROM users_group ug
+		JOIN ref_group g ON g.groupid = ug.groupid
+		WHERE ug.userid = $1
+	`, userID)
+
+	if err != nil {
+		return appErr.FromDB(err)
+	}
+
+	defer rows.Close()
+
+	for rows.Next() {
+		var g models.Group
+		if err := rows.Scan(&g.ID, &g.Name); err != nil {
+			return appErr.FromDB(err)
+		}
+		groups = append(groups, g)
+	}
+
+	var branchID sql.NullString
+	err = config.DB.QueryRow(
+		"SELECT branchid FROM users WHERE userid=$1",
+		userID,
+	).Scan(&branchID)
+
+	branch := ""
+	if branchID.Valid {
+		branch = branchID.String
+	}
+
 	// generate token baru
-	access, err := utils.GenerateAccessToken(userID, roleID.String)
+	access, err := utils.GenerateAccessToken(userID, roleID.String, branch, groups)
 	if err != nil {
 		return appErr.Internal(err)
 	}

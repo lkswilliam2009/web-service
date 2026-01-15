@@ -3,7 +3,7 @@ package config
 import (
 	"database/sql"
 	"log"
-	"os"
+	_ "os"
 
 	_ "github.com/lib/pq"
 )

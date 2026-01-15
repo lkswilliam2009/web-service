@@ -10,13 +10,18 @@ import (
 	"github.com/golang-jwt/jwt/v4"
 
 	"web-service/config"
+	"web-service/models"
 )
 
-func GenerateAccessToken(userID string, role string) (string, error) {
+func GenerateAccessToken(userID string, role string, branchID string, groups []models.Group) (string, error) {
 	claims := jwt.MapClaims{
 		"user_id": userID,
-		"role":    role,
-		"exp":     time.Now().Add(15 * time.Minute).Unix(),
+		"role": role,
+		"branch": branchID,
+		"groups": groups,
+		"exp": time.Now().Add(15 * time.Minute).Unix(),
+		"iat": time.Now().Unix(),
+		"iss": "sae-web-service",
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
@@ -26,8 +31,8 @@ func GenerateAccessToken(userID string, role string) (string, error) {
 func GenerateRefreshToken(userID string) (string, error) {
 	claims := jwt.MapClaims{
 		"user_id": userID,
-		"type":    "refresh",
-		"exp":     time.Now().Add(30 * 24 * time.Hour).Unix(),
+		"type": "refresh",
+		"exp": time.Now().Add(30 * 24 * time.Hour).Unix(),
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)

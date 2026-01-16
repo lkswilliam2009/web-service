@@ -38,16 +38,22 @@ go mod download
 
 ## ☕ Menjalankan Server
 
-Jalankan server dengan:
+Jalankan server dengan :
 ```bash
 go run main.go
 ```
 
-Atau gunakan:
+Atau gunakan :
 
 ```bash
 go build
 ./web-service
+```
+
+Atau gunakan untuk auto build :
+
+```bash
+air
 ```
 
 ## 📡 Contoh Request
